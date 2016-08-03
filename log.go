@@ -330,7 +330,7 @@ func (l *Log) updateCommitIndex(index uint64) {
 func (l *Log) setCommitIndex(index uint64) error {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-
+	logger.Printf("setCommitIndex index %d,l.startIndex %d , len(l.entries) %d", index, l.startIndex, len(l.entries))
 	// this is not error any more after limited the number of sending entries
 	// commit up to what we already have
 	if index > l.startIndex+uint64(len(l.entries)) {
@@ -338,20 +338,22 @@ func (l *Log) setCommitIndex(index uint64) error {
 		index = l.startIndex + uint64(len(l.entries))
 	}
 
-	// Do not allow previous indices to be committed again.
+	/*
+	 Do not allow previous indices to be committed again.
 
-	// This could happens, since the guarantee is that the new leader has up-to-dated
-	// log entries rather than has most up-to-dated committed index
+	 This could happens, since the guarantee is that the new leader has up-to-dated
+	 log entries rather than has most up-to-dated committed index
 
-	// For example, Leader 1 send log 80 to follower 2 and follower 3
-	// follower 2 and follow 3 all got the new entries and reply
-	// leader 1 committed entry 80 and send reply to follower 2 and follower3
-	// follower 2 receive the new committed index and update committed index to 80
-	// leader 1 fail to send the committed index to follower 3
-	// follower 3 promote to leader (server 1 and server 2 will vote, since leader 3
-	// has up-to-dated the entries)
-	// when new leader 3 send heartbeat with committed index = 0 to follower 2,
-	// follower 2 should reply success and let leader 3 update the committed index to 80
+	 For example, Leader 1 send log 80 to follower 2 and follower 3
+	 follower 2 and follow 3 all got the new entries and reply
+	 leader 1 committed entry 80 and send reply to follower 2 and follower3
+	 follower 2 receive the new committed index and update committed index to 80
+	 leader 1 fail to send the committed index to follower 3
+	 follower 3 promote to leader (server 1 and server 2 will vote, since leader 3
+	 has up-to-dated the entries)
+	 when new leader 3 send heartbeat with committed index = 0 to follower 2,
+	 follower 2 should reply success and let leader 3 update the committed index to 80
+	*/
 
 	if index < l.commitIndex {
 		return nil
@@ -374,7 +376,7 @@ func (l *Log) setCommitIndex(index uint64) error {
 		// Apply the changes to the state machine and store the error code.
 		returnValue, err := l.ApplyFunc(entry, command)
 
-		debugf("setCommitIndex.set.result index: %v, entries index: %v", i, entryIndex)
+		logger.Printf("setCommitIndex.set.result index: %v, entries index: %v", i, entryIndex)
 		if entry.event != nil {
 			entry.event.returnValue = returnValue
 			entry.event.c <- err
@@ -409,23 +411,23 @@ func (l *Log) flushCommitIndex() {
 func (l *Log) truncate(index uint64, term uint64) error {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-	debugln("log.truncate: ", index)
+	logger.Println("log.truncate: ", index)
 
 	// Do not allow committed entries to be truncated.
 	if index < l.commitIndex {
-		debugln("log.truncate.before")
+		logger.Println("log.truncate.before")
 		return fmt.Errorf("raft.Log: Index is already committed (%v): (IDX=%v, TERM=%v)", l.commitIndex, index, term)
 	}
 
 	// Do not truncate past end of entries.
 	if index > l.startIndex+uint64(len(l.entries)) {
-		debugln("log.truncate.after")
+		logger.Println("log.truncate.after")
 		return fmt.Errorf("raft.Log: Entry index does not exist (MAX=%v): (IDX=%v, TERM=%v)", len(l.entries), index, term)
 	}
 
 	// If we're truncating everything then just clear the entries.
 	if index == l.startIndex {
-		debugln("log.truncate.clear")
+		logger.Println("log.truncate.clear")
 		l.file.Truncate(0)
 		l.file.Seek(0, os.SEEK_SET)
 
@@ -441,13 +443,13 @@ func (l *Log) truncate(index uint64, term uint64) error {
 		// Do not truncate if the entry at index does not have the matching term.
 		entry := l.entries[index-l.startIndex-1]
 		if len(l.entries) > 0 && entry.Term() != term {
-			debugln("log.truncate.termMismatch")
+			logger.Println("log.truncate.termMismatch")
 			return fmt.Errorf("raft.Log: Entry at index does not have matching term (%v): (IDX=%v, TERM=%v)", entry.Term(), index, term)
 		}
 
 		// Otherwise truncate up to the desired entry.
 		if index < l.startIndex+uint64(len(l.entries)) {
-			debugln("log.truncate.finish")
+			logger.Println("log.truncate.finish")
 			position := l.entries[index-l.startIndex].Position
 			l.file.Truncate(position)
 			l.file.Seek(position, os.SEEK_SET)

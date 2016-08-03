@@ -37,6 +37,7 @@ func (c *DefaultJoinCommand) CommandName() string {
 }
 
 func (c *DefaultJoinCommand) Apply(server Server) (interface{}, error) {
+	logger.Printf("apply add peer %#v", server)
 	err := server.AddPeer(c.Name, c.ConnectionString)
 
 	return []byte("join"), err

@@ -6,6 +6,7 @@ import (
 	"fmt"
 	"hash/crc32"
 	"io/ioutil"
+	"log"
 	"os"
 	"path"
 	"sort"
@@ -191,6 +192,7 @@ func NewServer(name string, path string, transporter Transporter, stateMachine S
 	// Setup apply function.
 	s.log.ApplyFunc = func(e *LogEntry, c Command) (interface{}, error) {
 		// Dispatch commit event.
+		logger.Printf("apply func log entry %#v , command %#v", *e, c)
 		s.DispatchEvent(newEvent(CommitEventType, e, nil))
 
 		// Apply command to the state machine.
@@ -348,7 +350,7 @@ func (s *server) LastCommandName() string {
 func (s *server) GetState() string {
 	s.mutex.RLock()
 	defer s.mutex.RUnlock()
-	return fmt.Sprintf("Name: %s, State: %s, Term: %v, CommitedIndex: %v ", s.name, s.state, s.currentTerm, s.log.commitIndex)
+	return fmt.Sprintf("Name: %s, State: %s, currentTerm: %v, CommitedIndex: %v ", s.name, s.state, s.currentTerm, s.log.commitIndex)
 }
 
 // Check if the server is promotable
@@ -454,15 +456,15 @@ func (s *server) Start() error {
 	// 2. wait for self-join command
 	// to set itself promotable
 	if !s.promotable() {
-		s.debugln("start as a new raft server")
+		log.Println("start as a new raft server")
 
 		// If log entries exist then allow promotion to candidate
 		// if no AEs received.
 	} else {
-		s.debugln("start from previous saved state")
+		log.Println("start from previous saved state")
 	}
 
-	debugln(s.GetState())
+	logger.Println(s.GetState())
 
 	s.routineGroup.Add(1)
 	go func() {
@@ -594,18 +596,20 @@ func (s *server) updateCurrentTerm(term uint64, leaderName string) {
 //                    |_______________________|____________________________________ |
 // The main event loop for the server
 func (s *server) loop() {
-	defer s.debugln("server.loop.end")
+	defer logger.Println("server.loop.end")
 
 	state := s.State()
 
 	for state != Stopped {
-		s.debugln("server.loop.run ", state)
 		switch state {
 		case Follower:
+			logger.Println("server.loop.run ", s.GetState())
 			s.followerLoop()
 		case Candidate:
+			logger.Println("server.loop.run ", s.GetState())
 			s.candidateLoop()
 		case Leader:
+			logger.Println("server.loop.run ", s.GetState())
 			s.leaderLoop()
 		case Snapshotting:
 			s.snapshotLoop()
@@ -616,6 +620,7 @@ func (s *server) loop() {
 
 // Sends an event to the event loop to be processed. The function will wait
 // until the event is actually processed before returning.
+// warp command as a event
 func (s *server) send(value interface{}) (interface{}, error) {
 	if !s.Running() {
 		return nil, StopError
@@ -684,13 +689,15 @@ func (s *server) followerLoop() {
 				//If no log entries exist and a self-join command is issued
 				//then immediately become leader and commit entry.
 				if s.log.currentIndex() == 0 && req.NodeName() == s.Name() {
-					s.debugln("selfjoin and promote to leader")
+					logger.Println("followerLoop : selfjoin and promote to leader")
 					s.setState(Leader)
 					s.processCommand(req, e)
+					logger.Printf("followerLoop : req command %#v,event %#v", req, e)
 				} else {
 					err = NotLeaderError
 				}
 			case *AppendEntriesRequest:
+				logger.Printf("followerLoop : AppendEntriesRequest req command %#v,event %#v", req, e)
 				// If heartbeats get too close to the election timeout then send an event.
 				elapsedTime := time.Now().Sub(since)
 				if elapsedTime > time.Duration(float64(electionTimeout)*ElectionTimeoutThresholdPercent) {
@@ -706,6 +713,7 @@ func (s *server) followerLoop() {
 			}
 			// Callback to event.
 			e.c <- err
+			logger.Printf("followerLoop : return event %#v", e)
 
 		case <-timeoutChan:
 			// only allow synced follower to promote to candidate
@@ -812,7 +820,7 @@ func (s *server) leaderLoop() {
 	logIndex, _ := s.log.lastInfo()
 
 	// Update the peers prevLogIndex to leader's lastLogIndex and start heartbeat.
-	s.debugln("leaderLoop.set.PrevIndex to ", logIndex)
+	logger.Println("leaderLoop.set.PrevIndex to ", logIndex)
 	for _, peer := range s.peers {
 		peer.setPrevLogIndex(logIndex)
 		peer.startHeartbeat()
@@ -842,14 +850,20 @@ func (s *server) leaderLoop() {
 
 		case e := <-s.c:
 			switch req := e.target.(type) {
+			case NOPCommand:
+				logger.Printf("leaderLoop : NOPCommand %#v",req)
+				s.processCommand(req,e)
+				continue
 			case Command:
 				s.processCommand(req, e)
 				continue
 			case *AppendEntriesRequest:
+				logger.Printf("leaderLoop : AppendEntriesRequest %#v",req)
 				e.returnValue, _ = s.processAppendEntriesRequest(req)
 			case *AppendEntriesResponse:
 				s.processAppendEntriesResponse(req)
 			case *RequestVoteRequest:
+				logger.Printf("leaderLoop : RequestVoteRequest %#v",req)
 				e.returnValue, _ = s.processRequestVoteRequest(req)
 			}
 
@@ -899,7 +913,7 @@ func (s *server) Do(command Command) (interface{}, error) {
 
 // Processes a command.
 func (s *server) processCommand(command Command, e *ev) {
-	s.debugln("server.command.process")
+	logger.Println("server.command.process")
 
 	// Create an entry for the command in the log.
 	entry, err := s.log.createEntry(s.currentTerm, command, e)
@@ -910,17 +924,20 @@ func (s *server) processCommand(command Command, e *ev) {
 		return
 	}
 
+	logger.Printf("before s.log.append %s", s.GetState())
 	if err := s.log.appendEntry(entry); err != nil {
 		s.debugln("server.command.log.error:", err)
 		e.c <- err
 		return
 	}
+	logger.Printf("after s.log.append %s", s.GetState())
 
 	s.syncedPeer[s.Name()] = true
 	if len(s.peers) == 0 {
+		logger.Println("before commit index ", s.GetState())
 		commitIndex := s.log.currentIndex()
 		s.log.setCommitIndex(commitIndex)
-		s.debugln("commit index ", commitIndex)
+		logger.Println("after commit index ", s.GetState())
 	}
 }
 
@@ -937,10 +954,10 @@ func (s *server) AppendEntries(req *AppendEntriesRequest) *AppendEntriesResponse
 
 // Processes the "append entries" request.
 func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*AppendEntriesResponse, bool) {
-	s.traceln("server.ae.process")
+	logger.Println("server.ae.process")
 
 	if req.Term < s.currentTerm {
-		s.debugln("server.ae.error: stale term")
+		logger.Println("server.ae.error: stale term")
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), false
 	}
 
@@ -963,19 +980,19 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 
 	// Reject if log doesn't contain a matching previous entry.
 	if err := s.log.truncate(req.PrevLogIndex, req.PrevLogTerm); err != nil {
-		s.debugln("server.ae.truncate.error: ", err)
+		logger.Println("server.ae.truncate.error: ", err)
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
 	}
 
 	// Append entries to the log.
 	if err := s.log.appendEntries(req.Entries); err != nil {
-		s.debugln("server.ae.append.error: ", err)
+		logger.Println("server.ae.append.error: ", err)
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
 	}
 
 	// Commit up to the commit index.
 	if err := s.log.setCommitIndex(req.CommitIndex); err != nil {
-		s.debugln("server.ae.commit.error: ", err)
+		logger.Println("server.ae.commit.error: ", err)
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
 	}
 
@@ -1053,9 +1070,14 @@ func (s *server) processVoteResponse(resp *RequestVoteResponse) bool {
 // Request Vote
 //--------------------------------------
 
-// Requests a vote from a server. A vote can be obtained if the vote's term is
-// at the server's current term and the server has not made a vote yet. A vote
-// can also be obtained if the term is greater than the server's current term.
+
+/*
+ Requests a vote from a server. A vote can be obtained if the vote's term is
+ at the server's current term and the server has not made a vote yet. A vote
+ can also be obtained if the term is greater than the server's current term.
+1. vote's term = server's term && not make a vote yet
+2. vote's term > server's term
+*/
 func (s *server) RequestVote(req *RequestVoteRequest) *RequestVoteResponse {
 	ret, _ := s.send(req)
 	resp, _ := ret.(*RequestVoteResponse)
@@ -1064,10 +1086,20 @@ func (s *server) RequestVote(req *RequestVoteRequest) *RequestVoteResponse {
 
 // Processes a "request vote" request.
 func (s *server) processRequestVoteRequest(req *RequestVoteRequest) (*RequestVoteResponse, bool) {
+	/*
+	1. 比较 term
+		* req.Term < s.Term() -- 请求投票失败,这是过去的选举 term
+		* req.Term > s.Term() --- 请求投票成功,这是相比自己未来的选举,以未来的为准
+		* req.Term == s.Term() && s.votedFor != "" && s.votedFor != req.CandidateName 为别人投过票了
 
+	2. 比较 log
+		* lastIndex > req.LastLogIndex || lastTerm > req.LastLogTerm 如果 log entris 没有自身新,获取投票失败
+
+	3. 完成投票
+	*/
 	// If the request is coming from an old term then reject it.
 	if req.Term < s.Term() {
-		s.debugln("server.rv.deny.vote: cause stale term")
+		logger.Println("server.rv.deny.vote: cause stale term")
 		return newRequestVoteResponse(s.currentTerm, false), false
 	}
 
@@ -1077,7 +1109,7 @@ func (s *server) processRequestVoteRequest(req *RequestVoteRequest) (*RequestVot
 	if req.Term > s.Term() {
 		s.updateCurrentTerm(req.Term, "")
 	} else if s.votedFor != "" && s.votedFor != req.CandidateName {
-		s.debugln("server.deny.vote: cause duplicate vote: ", req.CandidateName,
+		logger.Println("server.deny.vote: cause duplicate vote: ", req.CandidateName,
 			" already vote for ", s.votedFor)
 		return newRequestVoteResponse(s.currentTerm, false), false
 	}
@@ -1085,14 +1117,14 @@ func (s *server) processRequestVoteRequest(req *RequestVoteRequest) (*RequestVot
 	// If the candidate's log is not at least as up-to-date as our last log then don't vote.
 	lastIndex, lastTerm := s.log.lastInfo()
 	if lastIndex > req.LastLogIndex || lastTerm > req.LastLogTerm {
-		s.debugln("server.deny.vote: cause out of date log: ", req.CandidateName,
+		logger.Println("server.deny.vote: cause out of date log: ", req.CandidateName,
 			"Index :[", lastIndex, "]", " [", req.LastLogIndex, "]",
 			"Term :[", lastTerm, "]", " [", req.LastLogTerm, "]")
 		return newRequestVoteResponse(s.currentTerm, false), false
 	}
 
 	// If we made it this far then cast a vote and reset our election time out.
-	s.debugln("server.rv.vote: ", s.name, " votes for", req.CandidateName, "at term", req.Term)
+	logger.Println("server.rv.vote: ", s.name, " votes for", req.CandidateName, "at term", req.Term)
 	s.votedFor = req.CandidateName
 
 	return newRequestVoteResponse(s.currentTerm, true), true
@@ -1104,7 +1136,7 @@ func (s *server) processRequestVoteRequest(req *RequestVoteRequest) (*RequestVot
 
 // Adds a peer to the server.
 func (s *server) AddPeer(name string, connectiongString string) error {
-	s.debugln("server.peer.add: ", name, len(s.peers))
+	logger.Printf("server.peer.add: name %s , peers %d", name, len(s.peers))
 
 	// Do not allow peers to be added twice.
 	if s.peers[name] != nil {

@@ -37,6 +37,10 @@ func SetLogLevel(level int) {
 	logLevel = level
 }
 
+func SetLogFlag(flag int) {
+	logger.SetFlags(flag)
+}
+
 //--------------------------------------
 // Warnings
 //--------------------------------------

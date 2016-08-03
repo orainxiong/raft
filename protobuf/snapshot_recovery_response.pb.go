@@ -4,7 +4,7 @@
 
 package protobuf
 
-import proto "code.google.com/p/goprotobuf/proto"
+import proto "github.com/gogo/protobuf/proto"
 import math "math"
 
 // discarding unused import gogoproto "code.google.com/p/gogoprotobuf/gogoproto/gogo.pb"

@@ -4,6 +4,7 @@ import (
 	"bytes"
 	"encoding/json"
 	"fmt"
+	"log"
 	"strconv"
 	"sync"
 	"testing"
@@ -16,15 +17,29 @@ import (
 
 // Ensure that we can request a vote from a server that has not voted.
 func TestServerRequestVote(t *testing.T) {
+
+	SetLogLevel(3)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
+
 	server := newTestServer("1", &testTransporter{})
 
 	server.Start()
+	logger.Printf("server state %#v", server)
+
 	if _, err := server.Do(&DefaultJoinCommand{Name: server.Name()}); err != nil {
 		t.Fatalf("Server %s unable to join: %v", server.Name(), err)
 	}
+	logger.Printf("server state %s", server.GetState())
 
 	defer server.Stop()
-	resp := server.RequestVote(newRequestVoteRequest(1, "foo", 1, 0))
+
+	var (
+		term          uint64 = 1
+		candidateName string = "foo"
+		lastLogIndex  uint64 = 1
+		lastLogTerm   uint64 = 0
+	)
+	resp := server.RequestVote(newRequestVoteRequest(term, candidateName, lastLogIndex, lastLogTerm))
 	if resp.Term != 1 || !resp.VoteGranted {
 		t.Fatalf("Invalid request vote response: %v/%v", resp.Term, resp.VoteGranted)
 	}
@@ -55,6 +70,8 @@ func TestServerRequestVoteDeniedForStaleTerm(t *testing.T) {
 
 // Ensure that a vote request is denied if we've already voted for a different candidate.
 func TestServerRequestVoteDeniedIfAlreadyVoted(t *testing.T) {
+	SetLogLevel(3)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
 	s := newTestServer("1", &testTransporter{})
 
 	s.Start()
@@ -66,11 +83,22 @@ func TestServerRequestVoteDeniedIfAlreadyVoted(t *testing.T) {
 	s.(*server).currentTerm = 2
 	s.(*server).mutex.Unlock()
 	defer s.Stop()
-	resp := s.RequestVote(newRequestVoteRequest(2, "foo", 1, 0))
+	var (
+		termA          uint64 = 2
+		candidateNameA string = "foo"
+		lastLogIndexA  uint64 = 2
+		lastLogTermA   uint64 = 0
+
+		termB          uint64 = 2
+		candidateNameB string = "bar"
+		lastLogIndexB  uint64 = 2
+		lastLogTermB   uint64 = 0
+	)
+	resp := s.RequestVote(newRequestVoteRequest(termA, candidateNameA, lastLogIndexA, lastLogTermA))
 	if resp.Term != 2 || !resp.VoteGranted {
 		t.Fatalf("First vote should not have been denied")
 	}
-	resp = s.RequestVote(newRequestVoteRequest(2, "bar", 1, 0))
+	resp = s.RequestVote(newRequestVoteRequest(termB, candidateNameB, lastLogIndexB, lastLogTermB))
 	if resp.Term != 2 || resp.VoteGranted {
 		t.Fatalf("Second vote should have been denied")
 	}
@@ -78,6 +106,8 @@ func TestServerRequestVoteDeniedIfAlreadyVoted(t *testing.T) {
 
 // Ensure that a vote request is approved if vote occurs in a new term.
 func TestServerRequestVoteApprovedIfAlreadyVotedInOlderTerm(t *testing.T) {
+	SetLogLevel(3)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
 	s := newTestServer("1", &testTransporter{})
 
 	s.Start()
@@ -104,7 +134,12 @@ func TestServerRequestVoteApprovedIfAlreadyVotedInOlderTerm(t *testing.T) {
 
 // Ensure that a vote request is denied if the log is out of date.
 func TestServerRequestVoteDenyIfCandidateLogIsBehind(t *testing.T) {
+	SetLogLevel(3)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
 	tmpLog := newLog()
+	/*
+		newLogEntry(log *Log, event *ev, index uint64, term uint64, command Command)
+	*/
 	e0, _ := newLogEntry(tmpLog, nil, 1, 1, &testCommand1{Val: "foo", I: 20})
 	e1, _ := newLogEntry(tmpLog, nil, 2, 1, &testCommand2{X: 100})
 	e2, _ := newLogEntry(tmpLog, nil, 3, 2, &testCommand1{Val: "bar", I: 0})
@@ -114,29 +149,40 @@ func TestServerRequestVoteDenyIfCandidateLogIsBehind(t *testing.T) {
 	s.Start()
 	defer s.Stop()
 
+	logger.Println("---------------------------------------------------")
+	logger.Printf("server s %s", s.GetState())
 	// request vote from term 3 with last log entry 2, 2
+	// (term uint64, candidateName string, lastLogIndex uint64, lastLogTerm uint64)
+	// req term > server.term and will update server.term
 	resp := s.RequestVote(newRequestVoteRequest(3, "foo", 2, 2))
 	if resp.Term != 3 || resp.VoteGranted {
 		t.Fatalf("Stale index vote should have been denied [%v/%v]", resp.Term, resp.VoteGranted)
 	}
-
+	logger.Printf("server s %s", s.GetState())
+	logger.Println("---------------------------------------------------")
+	logger.Printf("server s %s", s.GetState())
 	// request vote from term 2 with last log entry 2, 3
 	resp = s.RequestVote(newRequestVoteRequest(2, "foo", 3, 2))
 	if resp.Term != 3 || resp.VoteGranted {
 		t.Fatalf("Stale term vote should have been denied [%v/%v]", resp.Term, resp.VoteGranted)
 	}
-
+	logger.Printf("server s %s", s.GetState())
+	logger.Println("---------------------------------------------------")
+	logger.Printf("server s %s", s.GetState())
 	// request vote from term 3 with last log entry 2, 3
 	resp = s.RequestVote(newRequestVoteRequest(3, "foo", 3, 2))
 	if resp.Term != 3 || !resp.VoteGranted {
 		t.Fatalf("Matching log vote should have been granted")
 	}
-
+	logger.Printf("server s %s", s.GetState())
+	logger.Println("---------------------------------------------------")
+	logger.Printf("server s %s", s.GetState())
 	// request vote from term 3 with last log entry 2, 4
 	resp = s.RequestVote(newRequestVoteRequest(3, "foo", 4, 2))
 	if resp.Term != 3 || !resp.VoteGranted {
 		t.Fatalf("Ahead-of-log vote should have been granted")
 	}
+	logger.Printf("server s %s", s.GetState())
 }
 
 func TestProcessVoteResponse(t *testing.T) {
@@ -296,6 +342,9 @@ func TestServerAppendEntriesWithStaleTermsAreRejected(t *testing.T) {
 
 // Ensure that we reject entries if the commit log is different.
 func TestServerAppendEntriesRejectedIfAlreadyCommitted(t *testing.T) {
+
+	SetLogLevel(3)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
 	s := newTestServer("1", &testTransporter{})
 	s.Start()
 	defer s.Stop()
@@ -320,6 +369,8 @@ func TestServerAppendEntriesRejectedIfAlreadyCommitted(t *testing.T) {
 
 // Ensure that we uncommitted entries are rolled back if new entries overwrite them.
 func TestServerAppendEntriesOverwritesUncommittedEntries(t *testing.T) {
+	SetLogLevel(3)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
 	s := newTestServer("1", &testTransporter{})
 	s.Start()
 	defer s.Stop()
