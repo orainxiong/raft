@@ -954,7 +954,8 @@ func (s *server) AppendEntries(req *AppendEntriesRequest) *AppendEntriesResponse
 
 // Processes the "append entries" request.
 func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*AppendEntriesResponse, bool) {
-	logger.Println("server.ae.process")
+	logger.Printf("server.ae.process : req %#v",req)
+	logger.Printf("server.ae.process : server state %s",s.GetState())
 
 	if req.Term < s.currentTerm {
 		logger.Println("server.ae.error: stale term")
@@ -977,7 +978,7 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 		// Update term and leader.
 		s.updateCurrentTerm(req.Term, req.LeaderName)
 	}
-
+	logger.Printf("server.ae.process : server state %s",s.GetState())
 	// Reject if log doesn't contain a matching previous entry.
 	if err := s.log.truncate(req.PrevLogIndex, req.PrevLogTerm); err != nil {
 		logger.Println("server.ae.truncate.error: ", err)

@@ -9,6 +9,7 @@ import (
 	"sync"
 
 	"github.com/goraft/raft/protobuf"
+	"log"
 )
 
 //------------------------------------------------------------------------------
@@ -137,7 +138,7 @@ func (l *Log) open(path string) error {
 	var readBytes int64
 
 	var err error
-	debugln("log.open.open ", path)
+	log.Println("log.open.open ", path)
 	// open log file
 	l.file, err = os.OpenFile(path, os.O_RDWR, 0600)
 	l.path = path
@@ -155,7 +156,7 @@ func (l *Log) open(path string) error {
 		}
 		return err
 	}
-	debugln("log.open.exist ", path)
+	logger.Println("log.open.exist ", path)
 
 	// Read the file and decode entries.
 	for {
@@ -166,7 +167,7 @@ func (l *Log) open(path string) error {
 		n, err := entry.Decode(l.file)
 		if err != nil {
 			if err == io.EOF {
-				debugln("open.log.append: finish ")
+				logger.Println("open.log.append: finish ")
 			} else {
 				if err = os.Truncate(path, readBytes); err != nil {
 					return fmt.Errorf("raft.Log: Unable to recover: %v", err)
@@ -184,12 +185,12 @@ func (l *Log) open(path string) error {
 				}
 				l.ApplyFunc(entry, command)
 			}
-			debugln("open.log.append log index ", entry.Index())
+			logger.Println("open.log.append log index ", entry.Index())
 		}
 
 		readBytes += int64(n)
 	}
-	debugln("open.log.recovery number of log ", len(l.entries))
+	logger.Println("open.log.recovery number of log ", len(l.entries))
 	l.initialized = true
 	return nil
 }
@@ -330,11 +331,11 @@ func (l *Log) updateCommitIndex(index uint64) {
 func (l *Log) setCommitIndex(index uint64) error {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-	logger.Printf("setCommitIndex index %d,l.startIndex %d , len(l.entries) %d", index, l.startIndex, len(l.entries))
+	logger.Printf("setCommitIndexs %d,l.startIndex %d , len(l.entries) %d", index, l.startIndex, len(l.entries))
 	// this is not error any more after limited the number of sending entries
 	// commit up to what we already have
 	if index > l.startIndex+uint64(len(l.entries)) {
-		debugln("raft.Log: Commit index", index, "set back to ", len(l.entries))
+		logger.Println("raft.Log: Commit index", index, "set back to ", len(l.entries))
 		index = l.startIndex + uint64(len(l.entries))
 	}
 
@@ -411,7 +412,8 @@ func (l *Log) flushCommitIndex() {
 func (l *Log) truncate(index uint64, term uint64) error {
 	l.mutex.Lock()
 	defer l.mutex.Unlock()
-	logger.Println("log.truncate: ", index)
+	logger.Printf("log.truncate: index %d,term %d", index, term)
+	logger.Printf("log.truncate: l.startIndex %d , len(l.entries) %d , l.commitIndex %d", l.startIndex, len(l.entries),l.commitIndex)
 
 	// Do not allow committed entries to be truncated.
 	if index < l.commitIndex {
@@ -446,7 +448,7 @@ func (l *Log) truncate(index uint64, term uint64) error {
 			logger.Println("log.truncate.termMismatch")
 			return fmt.Errorf("raft.Log: Entry at index does not have matching term (%v): (IDX=%v, TERM=%v)", entry.Term(), index, term)
 		}
-
+		logger.Println("index ",index , "l.startIndex+uint64(len(l.entries)) ", l.startIndex+uint64(len(l.entries)))
 		// Otherwise truncate up to the desired entry.
 		if index < l.startIndex+uint64(len(l.entries)) {
 			logger.Println("log.truncate.finish")

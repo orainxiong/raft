@@ -2,6 +2,7 @@ package raft
 
 import (
 	"io/ioutil"
+	"log"
 	"os"
 	"reflect"
 	"testing"
@@ -160,6 +161,8 @@ func TestLogRecovery(t *testing.T) {
 
 // Ensure that we can truncate uncommitted entries in the log.
 func TestLogTruncate(t *testing.T) {
+	SetLogLevel(3)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
 	log, path := setupLog(nil)
 	if err := log.open(path); err != nil {
 		t.Fatalf("Unable to open log: %v", err)
@@ -183,28 +186,34 @@ func TestLogTruncate(t *testing.T) {
 		t.Fatalf("Unable to partially commit: %v", err)
 	}
 
+	logger.Println("-----------Truncate committed entry.-----------")
 	// Truncate committed entry.
 	if err := log.truncate(1, 1); err == nil || err.Error() != "raft.Log: Index is already committed (2): (IDX=1, TERM=1)" {
 		t.Fatalf("Truncating committed entries shouldn't work: %v", err)
 	}
+	logger.Println("-----------Truncate past end of log.-----------")
 	// Truncate past end of log.
 	if err := log.truncate(4, 2); err == nil || err.Error() != "raft.Log: Entry index does not exist (MAX=3): (IDX=4, TERM=2)" {
 		t.Fatalf("Truncating past end-of-log shouldn't work: %v", err)
 	}
+	logger.Println("-----------Truncate entry with mismatched term.-----------")
 	// Truncate entry with mismatched term.
 	if err := log.truncate(2, 2); err == nil || err.Error() != "raft.Log: Entry at index does not have matching term (1): (IDX=2, TERM=2)" {
 		t.Fatalf("Truncating mismatched entries shouldn't work: %v", err)
 	}
+	logger.Println("-----------Truncate end of log.-----------")
 	// Truncate end of log.
 	if err := log.truncate(3, 2); !(err == nil && reflect.DeepEqual(log.entries, []*LogEntry{entry1, entry2, entry3})) {
 		t.Fatalf("Truncating end of log should work: %v\n\nEntries:\nActual: %v\nExpected: %v", err, log.entries, []*LogEntry{entry1, entry2, entry3})
 	}
+	logger.Printf("%#v",log.entries)
+	logger.Println("-----------Truncate at last commit.-----------")
 	// Truncate at last commit.
 	if err := log.truncate(2, 1); !(err == nil && reflect.DeepEqual(log.entries, []*LogEntry{entry1, entry2})) {
 		t.Fatalf("Truncating at last commit should work: %v\n\nEntries:\nActual: %v\nExpected: %v", err, log.entries, []*LogEntry{entry1, entry2})
 	}
-
-	// Append after truncate
+	logger.Println("-----------Append after truncate.-----------")
+	// Append after truncate.
 	if err := log.appendEntry(entry3); err != nil {
 		t.Fatalf("Unable to append after truncate: %v", err)
 	}
