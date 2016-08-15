@@ -448,11 +448,11 @@ func (l *Log) truncate(index uint64, term uint64) error {
 			logger.Println("log.truncate.termMismatch")
 			return fmt.Errorf("raft.Log: Entry at index does not have matching term (%v): (IDX=%v, TERM=%v)", entry.Term(), index, term)
 		}
-		logger.Println("index ",index , "l.startIndex+uint64(len(l.entries)) ", l.startIndex+uint64(len(l.entries)))
+		logger.Println("index ",index , " l.startIndex + uint64(len(l.entries)) ", l.startIndex+uint64(len(l.entries)))
 		// Otherwise truncate up to the desired entry.
 		if index < l.startIndex+uint64(len(l.entries)) {
 			logger.Println("log.truncate.finish")
-			position := l.entries[index-l.startIndex].Position
+			position := l.entries[index-l.startIndex].Position //下一个 entry 的起点就是要 truncate 终点
 			l.file.Truncate(position)
 			l.file.Seek(position, os.SEEK_SET)
 

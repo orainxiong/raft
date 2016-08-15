@@ -480,7 +480,7 @@ func (s *server) Start() error {
 // Otherwise, Init() will load in the log entries from the log file.
 func (s *server) Init() error {
 	if s.Running() {
-		return fmt.Errorf("raft.Server: Server already running[%v]", s.state)
+		return fmt.Errorf("%s raft.Server: Server already running[%v]",s.name, s.state)
 	}
 
 	// Server has been initialized or server was stopped after initialized
@@ -851,19 +851,19 @@ func (s *server) leaderLoop() {
 		case e := <-s.c:
 			switch req := e.target.(type) {
 			case NOPCommand:
-				logger.Printf("leaderLoop : NOPCommand %#v",req)
-				s.processCommand(req,e)
+				logger.Printf("leaderLoop : NOPCommand %#v", req)
+				s.processCommand(req, e)
 				continue
 			case Command:
 				s.processCommand(req, e)
 				continue
 			case *AppendEntriesRequest:
-				logger.Printf("leaderLoop : AppendEntriesRequest %#v",req)
+				logger.Printf("leaderLoop : AppendEntriesRequest %#v", req)
 				e.returnValue, _ = s.processAppendEntriesRequest(req)
 			case *AppendEntriesResponse:
 				s.processAppendEntriesResponse(req)
 			case *RequestVoteRequest:
-				logger.Printf("leaderLoop : RequestVoteRequest %#v",req)
+				logger.Printf("leaderLoop : RequestVoteRequest %#v", req)
 				e.returnValue, _ = s.processRequestVoteRequest(req)
 			}
 
@@ -954,15 +954,13 @@ func (s *server) AppendEntries(req *AppendEntriesRequest) *AppendEntriesResponse
 
 // Processes the "append entries" request.
 func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*AppendEntriesResponse, bool) {
-	logger.Printf("server.ae.process : req %#v",req)
-	logger.Printf("server.ae.process : server state %s",s.GetState())
+	logger.Printf("server.ae.process : req %#v", req)
+	logger.Printf("server.ae.process : server state %s", s.GetState())
 
 	if req.Term < s.currentTerm {
 		logger.Println("server.ae.error: stale term")
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), false
-	}
-
-	if req.Term == s.currentTerm {
+	} else if req.Term == s.currentTerm {
 		_assert(s.State() != Leader, "leader.elected.at.same.term.%d\n", s.currentTerm)
 
 		// step-down to follower when it is a candidate
@@ -975,10 +973,11 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 		// save leader name when follower
 		s.leader = req.LeaderName
 	} else {
-		// Update term and leader.
+		// Update term and leader. when req.Term > s.currentTerm
 		s.updateCurrentTerm(req.Term, req.LeaderName)
 	}
-	logger.Printf("server.ae.process : server state %s",s.GetState())
+
+	logger.Printf("server.ae.process : server state %s", s.GetState())
 	// Reject if log doesn't contain a matching previous entry.
 	if err := s.log.truncate(req.PrevLogIndex, req.PrevLogTerm); err != nil {
 		logger.Println("server.ae.truncate.error: ", err)
@@ -1071,7 +1070,6 @@ func (s *server) processVoteResponse(resp *RequestVoteResponse) bool {
 // Request Vote
 //--------------------------------------
 
-
 /*
  Requests a vote from a server. A vote can be obtained if the vote's term is
  at the server's current term and the server has not made a vote yet. A vote
@@ -1088,15 +1086,15 @@ func (s *server) RequestVote(req *RequestVoteRequest) *RequestVoteResponse {
 // Processes a "request vote" request.
 func (s *server) processRequestVoteRequest(req *RequestVoteRequest) (*RequestVoteResponse, bool) {
 	/*
-	1. 比较 term
-		* req.Term < s.Term() -- 请求投票失败,这是过去的选举 term
-		* req.Term > s.Term() --- 请求投票成功,这是相比自己未来的选举,以未来的为准
-		* req.Term == s.Term() && s.votedFor != "" && s.votedFor != req.CandidateName 为别人投过票了
+		1. 比较 term
+			* req.Term < s.Term() -- 请求投票失败,这是过去的选举 term
+			* req.Term > s.Term() --- 请求投票成功,这是相比自己未来的选举,以未来的为准
+			* req.Term == s.Term() && s.votedFor != "" && s.votedFor != req.CandidateName 为别人投过票了
 
-	2. 比较 log
-		* lastIndex > req.LastLogIndex || lastTerm > req.LastLogTerm 如果 log entris 没有自身新,获取投票失败
+		2. 比较 log
+			* lastIndex > req.LastLogIndex || lastTerm > req.LastLogTerm 如果 log entris 没有自身新,获取投票失败
 
-	3. 完成投票
+		3. 完成投票
 	*/
 	// If the request is coming from an old term then reject it.
 	if req.Term < s.Term() {

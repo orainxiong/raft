@@ -307,14 +307,14 @@ func (p *Peer) sendSnapshotRecoveryRequest() {
 
 // send VoteRequest Request
 func (p *Peer) sendVoteRequest(req *RequestVoteRequest, c chan *RequestVoteResponse) {
-	debugln("peer.vote: ", p.server.Name(), "->", p.Name)
+	logger.Println("peer.vote: ", p.server.Name(), "->", p.Name)
 	req.peer = p
 	if resp := p.server.Transporter().SendVoteRequest(p.server, p, req); resp != nil {
-		debugln("peer.vote.recv: ", p.server.Name(), "<-", p.Name)
+		logger.Println("peer.vote.recv: ", p.server.Name(), "<-", p.Name)
 		p.setLastActivity(time.Now())
 		resp.peer = p
 		c <- resp
 	} else {
-		debugln("peer.vote.failed: ", p.server.Name(), "<-", p.Name)
+		logger.Println("peer.vote.failed: ", p.server.Name(), "<-", p.Name)
 	}
 }

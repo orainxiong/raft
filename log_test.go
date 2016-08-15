@@ -1,6 +1,7 @@
 package raft
 
 import (
+	"fmt"
 	"io/ioutil"
 	"log"
 	"os"
@@ -206,7 +207,7 @@ func TestLogTruncate(t *testing.T) {
 	if err := log.truncate(3, 2); !(err == nil && reflect.DeepEqual(log.entries, []*LogEntry{entry1, entry2, entry3})) {
 		t.Fatalf("Truncating end of log should work: %v\n\nEntries:\nActual: %v\nExpected: %v", err, log.entries, []*LogEntry{entry1, entry2, entry3})
 	}
-	logger.Printf("%#v",log.entries)
+	logger.Printf("%#v", log.entries)
 	logger.Println("-----------Truncate at last commit.-----------")
 	// Truncate at last commit.
 	if err := log.truncate(2, 1); !(err == nil && reflect.DeepEqual(log.entries, []*LogEntry{entry1, entry2})) {
@@ -238,4 +239,61 @@ func TestLogTruncate(t *testing.T) {
 	if log.entries[2].Index() != 3 || log.entries[2].Term() != 2 {
 		t.Fatalf("Unexpected entry[2]: %v", log.entries[2])
 	}
+}
+
+// add by orainxiong
+
+func newLogwithFile(f *os.File) *Log {
+	return &Log{
+		entries:    make([]*LogEntry, 0),
+		file:       f,
+		startIndex: 0,
+	}
+}
+
+type testOrainCommand struct {
+	Val string `json:"val"`
+	I   int    `json:"i"`
+}
+
+func (c *testOrainCommand) CommandName() string {
+	return "orainxiong"
+}
+
+func (c *testOrainCommand) Apply(server Server) (interface{}, error) {
+	return nil, nil
+}
+
+func TestProtobuf(t *testing.T) {
+	var (
+		path     string = "log_test_orain.log"
+		f        *os.File
+		log      *Log
+		err      error
+		le0  *LogEntry
+	)
+
+	f, err = os.OpenFile(path, os.O_APPEND|os.O_CREATE|os.O_WRONLY, 0600)
+
+	log = newLogwithFile(f)
+
+	if err := log.open(f.Name()); err != nil {
+		t.Fatalf("Unable to open log: %v", err)
+	}
+
+	var step int = 2
+	for i := 0; i < step; i++ {
+		le0, err = newLogEntry(log, nil, uint64(1)+log.currentIndex(), 1, &testOrainCommand{Val: fmt.Sprintf("orain+%d", uint64(1)+log.currentIndex()), I: 20})
+		if err != nil {
+			fmt.Println(err)
+		}
+		if err = log.appendEntry(le0); err != nil {
+			t.Log(err.Error())
+		}
+	}
+
+	for index, entry := range log.entries {
+		fmt.Printf("startindex %d , entries index %d , position %d , term %d , index %d\n", log.startIndex, index, entry.Position, entry.Term(), entry.Index())
+	}
+
 }

@@ -109,14 +109,16 @@ func newTestCluster(names []string, transporter Transporter, lookup map[string]S
 		if lookup[name] != nil {
 			panic(fmt.Sprintf("raft: Duplicate server in test cluster! %v", name))
 		}
-		server := newTestServerWithLog("1", transporter, []*LogEntry{e0})
+		server := newTestServerWithLog(name, transporter, []*LogEntry{e0})
 		server.SetElectionTimeout(testElectionTimeout)
 		servers = append(servers, server)
 		lookup[name] = server
 	}
 	for _, server := range servers {
 		server.SetHeartbeatInterval(testHeartbeatInterval)
-		server.Start()
+		if err := server.Start();err !=nil {
+			logger.Print(err.Error())
+		}
 		for _, peer := range servers {
 			server.AddPeer(peer.Name(), "")
 		}

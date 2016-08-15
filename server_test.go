@@ -248,6 +248,8 @@ func TestServerPromoteSelf(t *testing.T) {
 
 //Ensure that we can promote a server within a cluster to a leader.
 func TestServerPromote(t *testing.T) {
+	SetLogLevel(3)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
 	lookup := map[string]Server{}
 	transporter := &testTransporter{}
 	transporter.sendVoteRequestFunc = func(s Server, peer *Peer, req *RequestVoteRequest) *RequestVoteResponse {
@@ -257,10 +259,6 @@ func TestServerPromote(t *testing.T) {
 		return lookup[peer.Name].AppendEntries(req)
 	}
 	servers := newTestCluster([]string{"1", "2", "3"}, transporter, lookup)
-
-	servers[0].Start()
-	servers[1].Start()
-	servers[2].Start()
 
 	time.Sleep(2 * testElectionTimeout)
 
@@ -392,13 +390,19 @@ func TestServerAppendEntriesOverwritesUncommittedEntries(t *testing.T) {
 		}
 	}
 
+	logger.Println("---------------------------------------")
+
+	for index, entry := range s.LogEntries() {
+		logger.Printf("index  %d , term %d, index %d,command %s, command_name %s \n", index, entry.pb.GetTerm(), entry.pb.GetIndex(), entry.pb.GetCommand(), entry.pb.GetCommandName())
+	}
+
 	// Append entry that overwrites the second (uncommitted) entry.
 	entries = []*LogEntry{entry3}
 	resp = s.AppendEntries(newAppendEntriesRequest(2, 1, 1, 2, "ldr", entries))
 	if resp.Term() != 2 || !resp.Success() || s.(*server).log.commitIndex != 2 {
 		t.Fatalf("AppendEntries should have succeeded: %v/%v", resp.Term, resp.Success)
 	}
-
+	logger.Println("---------------------------------------")
 	entries = []*LogEntry{entry1, entry3}
 	for i, entry := range s.(*server).log.entries {
 		if entry.Term() != entries[i].Term() || entry.Index() != entries[i].Index() || !bytes.Equal(entry.Command(), entries[i].Command()) {
