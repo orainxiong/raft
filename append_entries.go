@@ -10,12 +10,12 @@ import (
 
 // The request sent to a server to append entries to the log.
 type AppendEntriesRequest struct {
-	Term         uint64
-	PrevLogIndex uint64
+	Term         uint64 // Leader Server 当前 term
+	PrevLogIndex uint64 // 根据 preLogIndex 在 server log entries 中获得 log entry 的 index & term
 	PrevLogTerm  uint64
-	CommitIndex  uint64
+	CommitIndex  uint64 // Leader Server 的 commited Index
 	LeaderName   string
-	Entries      []*protobuf.LogEntry
+	Entries      []*protobuf.LogEntry // 需要应用 log entries 列表,不超过阈值 maxLogEntriesPerRequest
 }
 
 // The response returned from a server appending entries to the log.

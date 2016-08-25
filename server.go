@@ -480,7 +480,7 @@ func (s *server) Start() error {
 // Otherwise, Init() will load in the log entries from the log file.
 func (s *server) Init() error {
 	if s.Running() {
-		return fmt.Errorf("%s raft.Server: Server already running[%v]",s.name, s.state)
+		return fmt.Errorf("%s raft.Server: Server already running[%v]", s.name, s.state)
 	}
 
 	// Server has been initialized or server was stopped after initialized
@@ -596,7 +596,7 @@ func (s *server) updateCurrentTerm(term uint64, leaderName string) {
 //                    |_______________________|____________________________________ |
 // The main event loop for the server
 func (s *server) loop() {
-	defer logger.Println("server.loop.end")
+	defer logger.Printf("server.loop.end %s", s.Name())
 
 	state := s.State()
 
@@ -697,7 +697,7 @@ func (s *server) followerLoop() {
 					err = NotLeaderError
 				}
 			case *AppendEntriesRequest:
-				logger.Printf("followerLoop : AppendEntriesRequest req command %#v,event %#v", req, e)
+				//logger.Printf("followerLoop : AppendEntriesRequest req command %#v,event %#v", req, e)
 				// If heartbeats get too close to the election timeout then send an event.
 				elapsedTime := time.Now().Sub(since)
 				if elapsedTime > time.Duration(float64(electionTimeout)*ElectionTimeoutThresholdPercent) {
@@ -712,12 +712,13 @@ func (s *server) followerLoop() {
 				err = NotLeaderError
 			}
 			// Callback to event.
+			//logger.Printf("followerLoop : name %s return event request %#v response %#v", s.Name(), e.target, e.returnValue)
 			e.c <- err
-			logger.Printf("followerLoop : return event %#v", e)
 
 		case <-timeoutChan:
 			// only allow synced follower to promote to candidate
 			if s.promotable() {
+				logger.Printf("name %s change state", s.Name())
 				s.setState(Candidate)
 			} else {
 				update = true
@@ -750,7 +751,7 @@ func (s *server) candidateLoop() {
 	var respChan chan *RequestVoteResponse
 
 	for s.State() == Candidate {
-		if doVote {
+		if doVote { // 增加 term & 为自己投票 & 向其他 peer 要求选票
 			// Increment current term, vote for self.
 			s.currentTerm++
 			s.votedFor = s.name
@@ -761,6 +762,7 @@ func (s *server) candidateLoop() {
 				s.routineGroup.Add(1)
 				go func(peer *Peer) {
 					defer s.routineGroup.Done()
+					logger.Printf("name %s send voterequest to %s", s.Name(), peer.Name)
 					peer.sendVoteRequest(newRequestVoteRequest(s.currentTerm, s.name, lastLogIndex, lastLogTerm), respChan)
 				}(peer)
 			}
@@ -776,9 +778,9 @@ func (s *server) candidateLoop() {
 		}
 
 		// If we received enough votes then stop waiting for more votes.
-		// And return from the candidate loop
+		// And return from the candidate loop 获取 n/2+1 的选票即认为当选
 		if votesGranted == s.QuorumSize() {
-			s.debugln("server.candidate.recv.enough.votes")
+			logger.Println("server.candidate.recv.enough.votes")
 			s.setState(Leader)
 			return
 		}
@@ -790,11 +792,18 @@ func (s *server) candidateLoop() {
 			return
 
 		case resp := <-respChan:
+			// processVoteReponse processes a vote request:
+			// 1. response 确认投票, resp.term 和 currentterm 相同 ,认为获取一张选票
+			// 2. response 拒绝投票, resp.term > currentterm ,说明 candidate 过时了,更新 candidate 的 currentterm,同时 step down 到 follower
+			// 3. response 拒绝投票, resp.term = currentterm ,
+			// 说明 这个 follower 已经给别人投过票了, 或者 log 的 index 对不上 ,直接忽略
+			// 4. response 拒绝投票, resp.term < currentterm ,
+			// 说明 收到的一个过去的 respone, 可能是网络原因导致,因为正常情况下 resp.term 只可能>= currentterm
 			if success := s.processVoteResponse(resp); success {
-				s.debugln("server.candidate.vote.granted: ", votesGranted)
+				logger.Println("server.candidate.vote.granted: ", votesGranted)
 				votesGranted++
 			}
-
+		// 在这个过程中,candidate 还会收到 AppendEntriesRequest & RequestVoteRequest
 		case e := <-s.c:
 			var err error
 			switch req := e.target.(type) {
@@ -957,7 +966,7 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 	logger.Printf("server.ae.process : req %#v", req)
 	logger.Printf("server.ae.process : server state %s", s.GetState())
 
-	if req.Term < s.currentTerm {
+	if req.Term < s.currentTerm { // 如果请求的 term 比自身当前的小,说明这是过期的 term, 直接丢弃,同时回复自身的 log entry 信息
 		logger.Println("server.ae.error: stale term")
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), false
 	} else if req.Term == s.currentTerm {
@@ -973,12 +982,12 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 		// save leader name when follower
 		s.leader = req.LeaderName
 	} else {
-		// Update term and leader. when req.Term > s.currentTerm
+		// Update term and leader. 当 req.Term > s.currentTerm ,说明自己错过了一些 term, 直接更新
 		s.updateCurrentTerm(req.Term, req.LeaderName)
 	}
 
 	logger.Printf("server.ae.process : server state %s", s.GetState())
-	// Reject if log doesn't contain a matching previous entry.
+	// Reject if log doesn't contain a matching previous entry. 保证 log safty
 	if err := s.log.truncate(req.PrevLogIndex, req.PrevLogTerm); err != nil {
 		logger.Println("server.ae.truncate.error: ", err)
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
@@ -995,9 +1004,7 @@ func (s *server) processAppendEntriesRequest(req *AppendEntriesRequest) (*Append
 		logger.Println("server.ae.commit.error: ", err)
 		return newAppendEntriesResponse(s.currentTerm, false, s.log.currentIndex(), s.log.CommitIndex()), true
 	}
-
 	// once the server appended and committed all the log entries from the leader
-
 	return newAppendEntriesResponse(s.currentTerm, true, s.log.currentIndex(), s.log.CommitIndex()), true
 }
 
@@ -1021,6 +1028,7 @@ func (s *server) processAppendEntriesResponse(resp *AppendEntriesResponse) {
 	if resp.append == true {
 		s.syncedPeer[resp.peer] = true
 	}
+	logger.Println(s.syncedPeer)
 
 	// Increment the commit count to make sure we have a quorum before committing.
 	if len(s.syncedPeer) < s.QuorumSize() {
@@ -1033,7 +1041,9 @@ func (s *server) processAppendEntriesResponse(resp *AppendEntriesResponse) {
 	for _, peer := range s.peers {
 		indices = append(indices, peer.getPrevLogIndex())
 	}
+	logger.Printf("leader %s peer commitindex list %v", s.Leader(), indices)
 	sort.Sort(sort.Reverse(uint64Slice(indices)))
+	logger.Printf("leader %s peer commitindex list %v", s.Leader(), indices)
 
 	// We can commit up to the index which the majority of the members have appended.
 	commitIndex := indices[s.QuorumSize()-1]
@@ -1107,7 +1117,7 @@ func (s *server) processRequestVoteRequest(req *RequestVoteRequest) (*RequestVot
 	// don't vote for this candidate.
 	if req.Term > s.Term() {
 		s.updateCurrentTerm(req.Term, "")
-	} else if s.votedFor != "" && s.votedFor != req.CandidateName {
+	} else if s.votedFor != "" && s.votedFor != req.CandidateName { // && req.Term == s.Term()
 		logger.Println("server.deny.vote: cause duplicate vote: ", req.CandidateName,
 			" already vote for ", s.votedFor)
 		return newRequestVoteResponse(s.currentTerm, false), false
@@ -1135,7 +1145,7 @@ func (s *server) processRequestVoteRequest(req *RequestVoteRequest) (*RequestVot
 
 // Adds a peer to the server.
 func (s *server) AddPeer(name string, connectiongString string) error {
-	logger.Printf("server.peer.add: name %s , peers %d", name, len(s.peers))
+	logger.Printf("server.peer.add: name %s add peer %s peers-len %d", s.Name(), name, len(s.peers))
 
 	// Do not allow peers to be added twice.
 	if s.peers[name] != nil {

@@ -270,6 +270,140 @@ func TestServerPromote(t *testing.T) {
 	}
 }
 
+func FindStrInStrArray(server_name string, servers []Server) bool {
+	for _, server := range servers {
+		if server_name == server.Name() {
+			return true
+		}
+	}
+	return false
+}
+
+func FindLeader(servers []Server) Server {
+	var getLeader bool = false
+	var index int
+	getLeader = false
+	index = -1
+	for i, server := range servers {
+		if server.State() == Leader {
+			getLeader = true
+			index = i
+			break
+		}
+	}
+
+	if !getLeader {
+		logger.Printf("------------- No leader elected: %#v", servers)
+		return nil
+	} else {
+		logger.Printf("------------- leader elected is %s %s", servers[index].Name(), servers[index].State())
+		return servers[index]
+	}
+}
+
+func ShowLeaderInfo(leader Server){
+	logger.Println("show leader info ",leader.GetState())
+	for _ , entry := range leader.LogEntries() {
+		logger.Println(entry.pb.GetTerm(),entry.pb.GetIndex(),entry.pb.GetCommandName(),string(entry.pb.GetCommand()))
+	}
+}
+
+// Test network partition
+// 集群A(Leader),B,C,D,E
+// 分裂成 A,B / C,D,E
+
+// 场景 1 : C,D,E 集群选出新 leader, 同时接受新的 command
+func TestNetworkPartition(t *testing.T) {
+	SetLogLevel(1)
+	SetLogFlag(log.Ldate | log.Ltime | log.Lshortfile)
+	lookup := map[string]Server{}
+	transporter := &testTransporter{}
+	transporter.sendVoteRequestFunc = func(s Server, peer *Peer, req *RequestVoteRequest) *RequestVoteResponse {
+		return lookup[peer.Name].RequestVote(req)
+	}
+	transporter.sendAppendEntriesRequestFunc = func(s Server, peer *Peer, req *AppendEntriesRequest) *AppendEntriesResponse {
+		return lookup[peer.Name].AppendEntries(req)
+	}
+	servers := newTestCluster([]string{"AA", "BB", "CC", "DD", "EE"}, transporter, lookup)
+
+	time.Sleep(2 * testElectionTimeout)
+
+	FindLeader(servers)
+
+	logger.Println("------------------------- start network partition -----------------------------------")
+	// 通过 transport 模拟 network partition
+	var GroupA []Server = []Server{servers[0], servers[1]}
+	var GroupB []Server = []Server{servers[2], servers[3], servers[4]}
+
+	logger.Println("------------------------- simulate network partition -----------------------------------")
+
+	transporter.sendVoteRequestFunc = func(s Server, peer *Peer, req *RequestVoteRequest) *RequestVoteResponse {
+		if FindStrInStrArray(s.Name(), GroupA) && FindStrInStrArray(peer.Name, GroupA) {
+			return lookup[peer.Name].RequestVote(req)
+		} else if FindStrInStrArray(s.Name(), GroupB) && FindStrInStrArray(peer.Name, GroupB) {
+			return lookup[peer.Name].RequestVote(req)
+		} else {
+			return nil
+		}
+
+	}
+
+	transporter.sendAppendEntriesRequestFunc = func(s Server, peer *Peer, req *AppendEntriesRequest) *AppendEntriesResponse {
+		if FindStrInStrArray(s.Name(), GroupA) && FindStrInStrArray(peer.Name, GroupA) {
+			return lookup[peer.Name].AppendEntries(req)
+		} else if FindStrInStrArray(s.Name(), GroupB) && FindStrInStrArray(peer.Name, GroupB) {
+			return lookup[peer.Name].AppendEntries(req)
+		} else {
+			return nil
+		}
+	}
+
+	logger.Println("------------------------- new term -----------------------------------")
+	// 留出时间选主
+	time.Sleep(2 * testElectionTimeout)
+
+	var A_Leader, B_Leader Server
+	// 老 leader 如果在集群A 中,那么 command 肯定是无法 commit 的,所以不能返回,通过 goroutine 运行
+	if A_Leader = FindLeader(GroupA); A_Leader != nil {
+		go A_Leader.Do(&testCommand1{Val: "foo", I: 30})
+		go A_Leader.Do(&testCommand1{Val: "foo", I: 40})
+	}
+
+	// 新集群中一定会选出新leader
+	if B_Leader = FindLeader(GroupB); B_Leader != nil {
+		B_Leader.Do(&testCommand1{Val: "foo", I: 80})
+		B_Leader.Do(&testCommand1{Val: "foo", I: 90})
+	}
+
+	time.Sleep(5 * testElectionTimeout)
+
+	if A_Leader != nil {
+		ShowLeaderInfo(A_Leader)
+	}
+	if B_Leader != nil {
+		ShowLeaderInfo(B_Leader)
+	}
+
+	logger.Println("------------------------- recover network failure -----------------------------------")
+	// 恢复网络
+	transporter.sendVoteRequestFunc = func(s Server, peer *Peer, req *RequestVoteRequest) *RequestVoteResponse {
+		return lookup[peer.Name].RequestVote(req)
+	}
+	transporter.sendAppendEntriesRequestFunc = func(s Server, peer *Peer, req *AppendEntriesRequest) *AppendEntriesResponse {
+		return lookup[peer.Name].AppendEntries(req)
+	}
+	// 恢复后的集群选出新leader
+	time.Sleep(2 * testElectionTimeout)
+
+	// 显示集群信息,可以看到,新的 leader 一定在 C,D,E ,因为 commited log index 大一些.
+	leader := FindLeader(servers)
+	ShowLeaderInfo(leader)
+
+	for _, s := range servers {
+		s.Stop()
+	}
+}
+
 //--------------------------------------
 // Append Entries
 //--------------------------------------

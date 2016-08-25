@@ -263,12 +263,12 @@ func (l *Log) getEntriesAfter(index uint64, maxLogEntriesPerRequest uint64) ([]*
 		return l.entries, l.startTerm
 	}
 
-	traceln("log.entriesAfter.partial: ", index, " ", l.entries[len(l.entries)-1].Index)
+	logger.Println("log.entriesAfter.partial: ", index, " ", l.entries[len(l.entries)-1].Index())
 
 	entries := l.entries[index-l.startIndex:]
 	length := len(entries)
 
-	traceln("log.entriesAfter: startIndex:", l.startIndex, " length", len(l.entries))
+	logger.Println("log.entriesAfter: startIndex:", l.startIndex, " length", len(l.entries))
 
 	if uint64(length) < maxLogEntriesPerRequest {
 		// Determine the term at the given entry and return a subslice.
@@ -324,7 +324,7 @@ func (l *Log) updateCommitIndex(index uint64) {
 	if index > l.commitIndex {
 		l.commitIndex = index
 	}
-	debugln("update.commit.index ", index)
+	logger.Println("update.commit.index ", index)
 }
 
 // Updates the commit index and writes entries after that index to the stable storage.
@@ -375,6 +375,7 @@ func (l *Log) setCommitIndex(index uint64) error {
 		}
 
 		// Apply the changes to the state machine and store the error code.
+		// 只有 commit 之后, updatecommitid 的时候,才会更新状态机
 		returnValue, err := l.ApplyFunc(entry, command)
 
 		logger.Printf("setCommitIndex.set.result index: %v, entries index: %v", i, entryIndex)

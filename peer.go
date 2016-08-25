@@ -142,7 +142,7 @@ func (p *Peer) heartbeat(c chan bool) {
 
 	ticker := time.Tick(p.heartbeatInterval)
 
-	debugln("peer.heartbeat: ", p.Name, p.heartbeatInterval)
+	logger.Println("peer.heartbeat: ", p.Name, p.heartbeatInterval)
 
 	for {
 		select {
@@ -151,10 +151,10 @@ func (p *Peer) heartbeat(c chan bool) {
 				// before we can safely remove a node
 				// we must flush the remove command to the node first
 				p.flush()
-				debugln("peer.heartbeat.stop.with.flush: ", p.Name)
+				logger.Println("peer.heartbeat.stop.with.flush: ", p.Name)
 				return
 			} else {
-				debugln("peer.heartbeat.stop: ", p.Name)
+				logger.Println("peer.heartbeat.stop: ", p.Name)
 				return
 			}
 
@@ -168,10 +168,11 @@ func (p *Peer) heartbeat(c chan bool) {
 }
 
 func (p *Peer) flush() {
-	debugln("peer.heartbeat.flush: ", p.Name)
+	//logger.Println("peer.heartbeat.flush: ", p.Name)
 	prevLogIndex := p.getPrevLogIndex()
 	term := p.server.currentTerm
-
+	// 将 entry 发送到 peer
+	//logger.Println("peer.heartbeat.flush: ", p.Name , " getEntriesAfter ", prevLogIndex , p.server.maxLogEntriesPerRequest)
 	entries, prevLogTerm := p.server.log.getEntriesAfter(prevLogIndex, p.server.maxLogEntriesPerRequest)
 
 	if entries != nil {
@@ -187,7 +188,7 @@ func (p *Peer) flush() {
 
 // Sends an AppendEntries request to the peer through the transport.
 func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
-	tracef("peer.append.send: %s->%s [prevLog:%v length: %v]\n",
+	logger.Printf("peer.append.send: %s->%s [prevLog:%v length: %v]\n",
 		p.server.Name(), p.Name, req.PrevLogIndex, len(req.Entries))
 
 	resp := p.server.Transporter().SendAppendEntriesRequest(p.server, p, req)
@@ -196,7 +197,7 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 		debugln("peer.append.timeout: ", p.server.Name(), "->", p.Name)
 		return
 	}
-	traceln("peer.append.resp: ", p.server.Name(), "<-", p.Name)
+	logger.Println("peer.append.resp: ", p.server.Name(), "<-", p.Name)
 
 	p.setLastActivity(time.Now())
 	// If successful then update the previous log index.
@@ -211,7 +212,7 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 				resp.append = true
 			}
 		}
-		traceln("peer.append.resp.success: ", p.Name, "; idx =", p.prevLogIndex)
+		logger.Println("peer.append.resp.success: ", p.Name, "; idx =", p.prevLogIndex)
 		// If it was unsuccessful then decrement the previous log index and
 		// we'll try again next time.
 	} else {
@@ -220,7 +221,7 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 			// known yet.
 			// this server can know until the new leader send a ae with higher term
 			// or this server finish processing this response.
-			debugln("peer.append.resp.not.update: new.leader.found")
+			logger.Println("peer.append.resp.not.update: new.leader.found")
 		} else if resp.Term() == req.Term && resp.CommitIndex() >= p.prevLogIndex {
 			// we may miss a response from peer
 			// so maybe the peer has committed the logs we just sent
@@ -231,7 +232,7 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 			// we just need to update peer's prevLog index to commitIndex
 
 			p.prevLogIndex = resp.CommitIndex()
-			debugln("peer.append.resp.update: ", p.Name, "; idx =", p.prevLogIndex)
+			logger.Println("peer.append.resp.update: ", p.Name, "; idx =", p.prevLogIndex)
 
 		} else if p.prevLogIndex > 0 {
 			// Decrement the previous log index down until we find a match. Don't
@@ -243,7 +244,7 @@ func (p *Peer) sendAppendEntriesRequest(req *AppendEntriesRequest) {
 				p.prevLogIndex = resp.Index()
 			}
 
-			debugln("peer.append.resp.decrement: ", p.Name, "; idx =", p.prevLogIndex)
+			logger.Println("peer.append.resp.decrement: ", p.Name, "; idx =", p.prevLogIndex)
 		}
 	}
 	p.Unlock()
